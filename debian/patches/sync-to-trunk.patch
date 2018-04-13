@@ -1,0 +1,436 @@
+Patch created with './debian/update-sync-to-main ../trunk'
+------------------------------------------------------------
+revno: 324
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Fri 2018-04-13 09:02:00 -0400
+message:
+  growpart: Fix check for MBR to use the correct name (dos).
+  
+  The previous commit was only tested with gpt formatted disk,
+  and thus mbr formatted disks would not emit the warning or
+  have the max size applied.
+------------------------------------------------------------
+revno: 323 [merge]
+fixes bug: https://launchpad.net/bugs/1762748
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Thu 2018-04-12 23:27:05 -0400
+message:
+  growpart: fix bug that stopped GPT disks from being grown past 2TB.
+  
+  MBR max size was being applied to GPT partitioned disks.
+  The change here is to only apply the mbr max (and only WARN about the limit)
+  if the format is MBR.
+  
+  Also, adjust test/test-growpart to support reading disk orig size
+  and new size from environment to make testing more easy.
+  
+    sudo PATH=./bin:$PATH PT_TYPE=gpt \
+       DISK_SIZE_NEW=5T DISK_SIZE_ORIG=1T ./test/test-growpart
+------------------------------------------------------------
+revno: 322
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Thu 2018-01-04 14:02:54 -0500
+message:
+  update changelog
+------------------------------------------------------------
+revno: 321 [merge]
+fixes bug: https://launchpad.net/bugs/1715994
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Thu 2018-01-04 14:02:26 -0500
+message:
+  mount-image-callback: Drop support for mounting lxd containers.
+  
+  The 'lxd:' support in mount-image-callback only worked in some cases,
+  and then stopped working in all cases with lxc 2.17.
+  
+  This drops the lxd support, but leaves in the 'mchroot' support which
+  came with it.
+------------------------------------------------------------
+revno: 320
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Thu 2018-01-04 14:01:39 -0500
+message:
+  update changelog
+------------------------------------------------------------
+revno: 319
+fixes bugs: https://launchpad.net/bugs/1741300 https://launchpad.net/bugs/1741096
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Thu 2018-01-04 13:56:52 -0500
+message:
+  mount-image-callback: run blockdev and udevadm settle on nbd devices.
+  
+  When we connect nbd devices, ensure that the kernel re-reads the partition
+  table information.  This ensures that the partition devices (nbd0p1, nbd0p2)
+  are correct when used later.
+  
+  Also required then is a udevadm settle.
+  
+  On xenial, the blockdev is needed, on newer releases some udev magic or
+  systemd handles it.
+------------------------------------------------------------
+revno: 318
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Wed 2018-01-03 11:34:51 -0500
+message:
+  test/test-mic: better debug info
+------------------------------------------------------------
+revno: 317
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Wed 2018-01-03 10:44:47 -0500
+message:
+  mount-image-callback: more helpful debug messages.
+------------------------------------------------------------
+revno: 316
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Fri 2017-02-10 15:31:23 -0500
+message:
+  update changelog
+------------------------------------------------------------
+revno: 315
+fixes bug: https://launchpad.net/bugs/1663722
+committer: Scott Moser <smoser@ubuntu.com>
+branch nick: trunk
+timestamp: Fri 2017-02-10 15:30:56 -0500
+message:
+  mount-image-callback: fix nbd mounting with rw.
+  
+  mount was getting called with -o '' due to bad variable name
+------------------------------------------------------------
+Use --include-merged or -n0 to see merged revisions.
+=== modified file 'ChangeLog'
+--- old/ChangeLog	2016-10-24 15:31:49 +0000
++++ new/ChangeLog	2018-01-04 19:02:54 +0000
+@@ -1,3 +1,10 @@
++0.31
++ - mount-image-callback: mount with -o 'rw' or -o 'ro' (LP: #1663722)
++ - mount-image-callback: run blockdev and udevadm settle on nbd devices.
++   (LP: #1741096, 1741300)
++ - mount-image-callback: Drop support for mounting lxd containers.
++   (LP: #1715994)
++
+ 0.30
+  - ubuntu-cloudimg-query: fix xenial default to be ebs-ssd
+     as traditional ebs are no longer available. (LP: #1593451)
+
+=== modified file 'bin/growpart'
+--- old/bin/growpart	2016-09-01 17:46:40 +0000
++++ new/bin/growpart	2018-04-13 13:02:00 +0000
+@@ -244,8 +244,6 @@
+ 	fi
+ 
+ 	debug 1 "$sector_num sectors of $sector_size. total size=${disk_size} bytes"
+-	[ $(($disk_size/512)) -gt $mbr_max_512 ] &&
+-		debug 1 "WARN: disk is larger than 2TB. additional space will go unused."
+ 
+ 	rqe sfd_dump sfdisk --unit=S --dump "${DISK}" >"${dump_out}" ||
+ 		fail "failed to dump sfdisk info for ${DISK}"
+@@ -289,17 +287,21 @@
+ 		[ -n "${max_end}" ] ||
+ 		fail "failed to get max_end for partition ${PART}"
+ 
+-	mbr_max_sectors=$((mbr_max_512*$((sector_size/512))))
+-	if [ "$max_end" -gt "$mbr_max_sectors" ]; then
+-		max_end=$mbr_max_sectors
+-	fi
+-
+ 	if [ "$format" = "gpt" ]; then
+ 		# sfdisk respects 'last-lba' in input, and complains about
+ 		# partitions that go past that.  without it, it does the right thing.
+ 		sed -i '/^last-lba:/d' "$dump_out" ||
+ 			fail "failed to remove last-lba from output"
+ 	fi
++	if [ "$format" = "dos" ]; then
++		mbr_max_sectors=$((mbr_max_512*$((sector_size/512))))
++		if [ "$max_end" -gt "$mbr_max_sectors" ]; then
++			max_end=$mbr_max_sectors
++		fi
++		[ $(($disk_size/512)) -gt $mbr_max_512 ] &&
++			debug 0 "WARNING: MBR/dos partitioned disk is larger than 2TB." \
++				"Additional space will go unused."
++	fi
+ 
+ 	local gpt_second_size="33"
+ 	if [ "${max_end}" -gt "$((${sector_num}-${gpt_second_size}))" ]; then
+
+=== modified file 'bin/mount-image-callback'
+--- old/bin/mount-image-callback	2016-10-24 15:42:55 +0000
++++ new/bin/mount-image-callback	2018-01-04 18:59:26 +0000
+@@ -17,7 +17,6 @@
+    invoke the provided cmd with args
+ 
+    supported 'file' are:
+-      lxd:name  : the rootfs for lxd container 'name'
+       file      : any disk format supported by qemu-nbd
+ 
+    the temporary mountpoint will be put in an a environment variable
+@@ -159,37 +158,13 @@
+ 	local d="$1"
+ 	local umap="$1" gmap="$2"
+ 	[ -d "$1" ] || mkdir -p "$1"
+-	add_bin "$d/uns-switch" <<"EOF" || return 1
+-#!/bin/sh
+-[ $# -eq 0 ] && set -- ${SHELL:-/bin/bash}
+-if [ -z "$MIC_SUBUID" -a -z "$MIC_SUBGID" ]; then
+-	exec "$@"
+-fi
+-exec lxc-usernsexec ${MIC_SUBUID:+-m u:0:${MIC_SUBUID}} \
+-	${MIC_SUBGID:+-m g:0:${MIC_SUBGID}} -- "$@"
+-EOF
+ 	add_bin "$d/mchroot" <<"EOF" || return 1
+ #!/bin/sh
+-exec uns-switch chroot "$MOUNTPOINT" "$@"
++exec chroot "$MOUNTPOINT" "$@"
+ EOF
+ 	return
+ }
+ 
+-get_subid() {
+-	local id="$1" file="$2"
+-	awk -F: '$1 == id { printf("%s:%s\n", $2, $3); exit(0); }' \
+-		id="$id" "$file"
+-}
+-
+-set_subids() {
+-	local id="$1" out="" muid="" mgid=""
+-	[ -z "$id" ] && return 0
+-	muid=$(get_subid "$id" /etc/subuid) &&
+-		mgid=$(get_subid "$id" /etc/subgid) &&
+-		[ -n "$muid" -a -n "$mgid" ] &&
+-		export MIC_SUBGID="$muid" MIC_SUBUID="$mgid" && return
+-}
+-
+ mount_overlay() {
+ 	local lower="$1" upper="$2" workdir="$3"
+ 	local olayopts="lowerdir=$lower,upperdir=$upper"
+@@ -276,13 +251,21 @@
+ 			debug 2 "."
+ 		done
+ 	fi
+-	read pid < "$pidfile" && debug 2 "pid for $nbd is $pidfile" || {
++	read pid < "$pidfile" && debug 2 "pid for $nbd is $pid" || {
+ 		error "reading pid from $pidfile for $nbd failed!";
+ 		disconnect_qemu
+ 		return 1
+ 	}
+ 
+ 	debug 1 "connected $img_in ($fmt) ${rwmode} to $nbd. waiting for device."
++
++	local out=""
++	# This can fail due to udev events, but we ignore that.  We need to ensure
++	# it happens for where it doesnt happen automatically (LP: #1741300)
++	out=$(blockdev --rereadpt "$nbd" 2>&1) ||
++		debug 1 "blockdev rereadpt $nbd failed"
++	udevadm settle
++
+ 	i=0
+ 	while i=$(($i+1)):; do
+ 		get_partition "$nbd" && nptnum="$_RET" && break
+@@ -345,8 +328,8 @@
+ 	assert_nbd_support || return
+ 	connect_nbd "$img" "$fmt" "$ptnum" "$rwmode" || return
+ 	local ptnum="$_RET_PT" mdev="$_RET_DEV" nbd="$_RET_NBD"
+-	if ( set -f; mount -o "$romode" $opts "$mdev" "$img_mp" ); then
+-		debug 1 "mounted $mdev via qemu-nbd $nbd"
++	if ( set -f; mount -o "$rwmode" $opts "$mdev" "$img_mp" ); then
++		debug 1 "mounted $mdev via qemu-nbd $nbd at $img_mp"
+ 	else
+ 		error "failed to mount $mdev"
+ 		return 1
+@@ -396,38 +379,18 @@
+ 		return 1;
+ 	}
+ 
+-	local uns_switch=false
+ 	img_in="$1"
+ 	shift 1
+ 
+-	case "$img_in" in
+-		lxd:*)
+-			if [ "$ptnum" != "auto" ]; then
+-				error "--ptnum incompatible with directory"
+-				return 1;
+-			fi
+-			command -v lxc-usernsexec >/dev/null 2>&1 || {
+-				error "lxd support needs lxc-usernsexec"; 
+-				return 1;
+-			}
+-			img="/var/lib/lxd/containers/${img_in#lxd:}/rootfs"
+-			[ -d "$img" ] || {
+-				error "${img_in}: no rootfs in $img. Not a container?"
+-				return 1;
+-			}
+-			set_subids lxd || {
+-				error "failed reading subids for lxd";
+-				return 1;
+-			}
+-			uns_switch=true
+-			;;
+-		*)
+-			img=$(readlink -f "$img_in") ||
+-				{ error "failed to get full path to $img_in"; return 1; }
+-			[ -f "$img" ] ||
+-				{ error "$img: not a file"; return 1; }
+-			;;
+-	esac
++	if [ "${img_in#lxd:}" != "${img_in}" -a ! -f "${img_in}" ]; then
++		error "${img_in}: lxd is no longer supported."
++		return 1;
++	fi
++
++	img=$(readlink -f "$img_in") ||
++		{ error "failed to get full path to $img_in"; return 1; }
++	[ -f "$img" ] ||
++		{ error "$img: not a file"; return 1; }
+ 
+ 	[ "$(id -u)" = "0" ] ||
+ 		{ error "sorry, must be root"; return 1; }
+@@ -454,18 +417,9 @@
+ 	fi
+ 
+ 	out=""
+-	if [ -d "$img" ]; then
+-		debug 1 "using directory at $img for $img_in"
+-		mp=$img
+-		if $overlay; then
+-			debug 1 "mounting $img to $mp"
+-			mount --bind "$img" "$img_mp" ||
+-				{ error "failed to mount --bind '$img' '$mp'"; return 1; }
+-			UMOUNTS[${#UMOUNTS[@]}]="$mp"
+-		fi
+-	elif [ "$ptnum" = "auto" -o "$ptnum" = "0" ] &&
++	if [ "$ptnum" = "auto" -o "$ptnum" = "0" ] &&
+ 		out=$(set -f; mount -o "loop,$rwmode" $opts "$img" "$img_mp" 2>&1); then
+-		debug 1 "mounted simple filesystem image $rwmode in '$img_in'"
++		debug 1 "mounted simple fs image $rwmode in '$img_in' at $img_mp"
+ 		UMOUNTS[${UMOUNT[@]}]="$img_mp"
+ 	else
+ 		local hasqemu=false
+@@ -479,7 +433,7 @@
+ 			fi
+ 			return 1
+ 		fi
+-		mount_nbd "$img" "$img_mp" "$fmt" "$ptnum" "$opts" || return
++		mount_nbd "$img" "$img_mp" "$fmt" "$ptnum" "$rwmode" "$opts" || return
+ 		UMOUNTS[${#UMOUNTS[@]}]="$img_mp"
+ 	fi
+ 
+@@ -530,13 +484,6 @@
+ 		error "MOUNTPOINT=$mp"
+ 	fi
+ 
+-	if $uns_switch && [ "$1" = "chroot" ]; then
+-		debug 1 "added helper uns-switch for chroot"
+-		cmd=( uns-switch "${cmd[@]}" )
+-	elif $uns_switch; then
+-		debug 1 "uns-switch helper can be used for changing user map"
+-	fi
+-
+ 	add_helpers "$TEMP_D/bin" "$SUBUID" "$SUBGID" || {
+ 		error "failed to add helpers to $TEMP_D";
+ 		return 1;
+
+=== modified file 'debian/changelog'
+
+=== modified file 'test/test-growpart'
+--- old/test/test-growpart	2016-09-01 19:29:00 +0000
++++ new/test/test-growpart	2018-04-13 03:23:08 +0000
+@@ -5,7 +5,10 @@
+ [ "$(id -u)" = "0" ] ||
+ 	{ echo "sorry, must be root"; exit 1; }
+ 
+-PT_TYPE="${PT_TYPE:-dos}" # dos or gpt or sfdisk-gpt
++PT_TYPE="${PT_TYPE:-dos}" # dos or gpt
++size=${DISK_SIZE_NEW:-1000M}
++osize=${DISK_SIZE_ORIG:-500M}
++
+ MP=""
+ LODEV=""
+ TEMP_D=""
+@@ -43,15 +46,15 @@
+ img="${TEMP_D}/disk.img"
+ mp="${TEMP_D}/mp"
+ 
+-size=1000M
+-osize=500M
++echo "Partitioning $PT_TYPE orig_size=$osize grow_size=$size."
++echo "growpart is $(which growpart)"
+ rm -f $img
+ [ ! -e $mp ] || rmdir $mp || { echo "failed rmdir $mp"; exit 1; }
+ mkdir $mp
+ 
+ truncate --size $osize "$img"
+ 
+-label_flag="--label=${PT_TYPE:-dos}"
++label_flag="--label=${PT_TYPE}"
+ echo "2048," | rq sfdisk $label_flag --force --unit=S "$img"
+ 
+ truncate --size "$size" "$img"
+
+=== modified file 'test/test-mic'
+--- old/test/test-mic	2016-10-05 14:35:51 +0000
++++ new/test/test-mic	2018-01-03 16:34:51 +0000
+@@ -12,7 +12,7 @@
+ }
+ rq() {
+    local out="${TEMP_D}/out"
+-	"$@" > "$out" 2>&1 || { error "FAILED:" "$@"; cat "$out"; return 1; }
++	"$@" > "$out" 2>&1 || { error "FAILED [$?]:" "$@"; cat "$out"; return 1; }
+ }
+ fail() { echo "$@" 1>&2; exit 1; }
+ error() { echo "$@" 1>&2; }
+@@ -26,17 +26,25 @@
+ 			error "${premsg}failed writing to partition $pt in $img";
+ 			return 1;
+ 		}
+-	local expected=$(printf "%s\n%s\n" "$info" "$data")
++	local ret="" expected=$(printf "%s\n%s\n" "$info" "$data")
+ 	out=$(mount-image-callback --read-only --cd "--part=$pt" "$img" -- \
+-		sh -c "cat info.txt data.txt") || {
+-			error "${premsg}failed mounting part $pt for verification";
+-			return 1;
+-		}
++		sh -c '
++		    r=0; for f in "$@"; do
++		    cat $f || { echo "$f: cat failed rc=$?"; r=99; }; done;
++		    exit $r' sh-extract info.txt data.txt)
++	ret=$?
++	if [ $ret -ne 0 -a $ret -ne 99 ]; then
++		error "${premsg}failed mounting part $pt for verification";
++		error "out=${out}"
++		return 1;
++	fi
+ 	[ "$expected" = "$out" ] || {
+-		error "${premsg}expected $pt to have:"
++		error "${premsg}"
++		error "== expected on $pt =="
+ 		error "$expected"
+-		error "found:"
++		error "== found on $pt =="
+ 		error "$out"
++		return 1
+ 	}
+ }
+ 
+@@ -189,10 +197,10 @@
+ 	img=${toks#*:}
+ 	prefix=${toks%%:*}
+ 	do_pt_test "$img" 1 "foo1" "partition 1" "$prefix: " ||
+-		fail "${prefix}failed testing partition 1 on $img"
++		fail "${prefix}: failed testing partition 1 on $img"
+ 
+ 	do_pt_test "$img" 2 "foo2" "partition 2" "$prefix: " ||
+-		fail "${prefix}failed testing partition 2 on $img"
++		fail "${prefix}: failed testing partition 2 on $img"
+ done
+ 
+ error "Finished tests."
+
